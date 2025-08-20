@@ -2,7 +2,7 @@
 //  RawProcessor.swift
 //  OpenFuse
 //
-//  Created by Kris Li on 8/19/25.
+//  Rewritten for robustness on Simulator and device.
 //
 
 import Foundation
@@ -19,80 +19,67 @@ struct RawProcessor {
     static func mergeAndDevelop(dngDatas: [Data], saveOneDNG: Bool) throws -> (jpegData: Data, savedDNG: Data?) {
         guard !dngDatas.isEmpty else { throw ProcessError(message: "No frames") }
 
-        // GPU-backed CIContext in linear sRGB
+        // GPU‑backed CIContext in linear sRGB
         let ciContext = CIContext(options: [
             .workingColorSpace: CGColorSpace(name: CGColorSpace.linearSRGB) as Any,
             .useSoftwareRenderer: false
         ])
 
         // 1) Develop each DNG to a linear CIImage with neutral settings
-        var developed: [CIImage] = []
-        developed.reserveCapacity(dngDatas.count)
+        let developed = try decodeDNGs(dngDatas)
+        guard !developed.isEmpty else { throw ProcessError(message: "No decodable RAW frames") }
 
+        // 2) Align all frames to the first using Vision translation (fast, robust)
+        let aligned = alignImagesToFirst(developed)
+
+        // 3) Average aligned frames to reduce noise without halos
+        let averaged = averageImages(aligned)
+
+        // 4) Gentle tone mapping (very light shadows lift)
+        let toned = applyGentleTone(averaged)
+
+        // 5) Render to JPEG data
+        let jpegData = try renderJPEG(toned, context: ciContext, quality: 0.92)
+
+        // Save one DNG (middle frame) if requested
+        let savedDNG = saveOneDNG ? dngDatas[dngDatas.count / 2] : nil
+        return (jpegData, savedDNG)
+    }
+
+    // MARK: - Decode
+
+    private static func decodeDNGs(_ dngDatas: [Data]) throws -> [CIImage] {
+        var output: [CIImage] = []
+        output.reserveCapacity(dngDatas.count)
         for data in dngDatas {
             guard let raw = CIRAWFilter(imageData: data, options: nil) else {
                 throw ProcessError(message: "CIRAWFilter init failed")
             }
-            // Dial back processing for a neutral look
+            // Keep rendering neutral. Only use well‑supported knobs.
             raw.boostAmount = 0.0
             raw.scaleFactor = 1.0
-
-            // Future-proof adjustments using setValue for keys if supported
-            raw.setValue(0.0, forKey: "noiseReductionAmount")
-            raw.setValue(0.0, forKey: "luminanceNoiseReductionAmount")
-            raw.setValue(0.0, forKey: "sharpness")
-
-            guard let out = raw.outputImage else { continue }
-            developed.append(out)
+            if let img = raw.outputImage {
+                output.append(img)
+            }
         }
-
-        guard let base = developed.first else { throw ProcessError(message: "No decodable RAW frames") }
-
-        // 2) Align all frames to the first using Vision (translation-only for speed)
-        let aligned: [CIImage] = developed.enumerated().map { idx, img in
-            if idx == 0 { return img }
-            let t = translation(from: img, to: base) ?? .identity
-            return img.transformed(by: t)
-        }
-
-        // 3) Average the aligned frames in CI (scale each by 1/N, then add)
-        let scale = 1.0 / Double(aligned.count)
-        var accumulator = colorMatrix(image: aligned[0], scale: scale)
-        for i in 1..<aligned.count {
-            let scaled = colorMatrix(image: aligned[i], scale: scale)
-            guard let added = CIFilter(name: "CIAdditionCompositing", parameters: [
-                kCIInputImageKey: scaled, kCIInputBackgroundImageKey: accumulator
-            ])?.outputImage else { continue }
-            accumulator = added
-        }
-
-        // 4) Optional mild tone mapping (very gentle to keep the natural look)
-        let tone = CIFilter(name: "CIHighlightShadowAdjust", parameters: [
-            kCIInputImageKey: accumulator, "inputShadowAmount": 0.2, "inputHighlightAmount": 0.0
-        ])?.outputImage ?? accumulator
-
-        // 5) Render to JPEG data
-        let extent = tone.extent
-        guard let cg = ciContext.createCGImage(tone, from: extent) else {
-            throw ProcessError(message: "CGImage render failed")
-        }
-        let jpegData = encodeJPEG(cgImage: cg, quality: 0.92)
-
-        // Save one DNG (middle frame) if requested
-        let savedDNG = saveOneDNG ? dngDatas[dngDatas.count/2] : nil
-        return (jpegData, savedDNG)
+        return output
     }
 
-    // MARK: - Helpers
+    // MARK: - Align
 
-    private static func colorMatrix(image: CIImage, scale: Double) -> CIImage {
-        CIFilter(name: "CIColorMatrix", parameters: [
-            kCIInputImageKey: image,
-            "inputRVector": CIVector(x: scale, y: 0, z: 0, w: 0),
-            "inputGVector": CIVector(x: 0, y: scale, z: 0, w: 0),
-            "inputBVector": CIVector(x: 0, y: 0, z: scale, w: 0),
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
-        ])!.outputImage!
+    private static func alignImagesToFirst(_ images: [CIImage]) -> [CIImage] {
+        guard let base = images.first else { return images }
+        var aligned: [CIImage] = [base]
+        aligned.reserveCapacity(images.count)
+        for idx in 1..<images.count {
+            let moving = images[idx]
+            if let t = translation(from: moving, to: base) {
+                aligned.append(moving.transformed(by: t))
+            } else {
+                aligned.append(moving) // fallback: no transform
+            }
+        }
+        return aligned
     }
 
     private static func translation(from moving: CIImage, to fixed: CIImage) -> CGAffineTransform? {
@@ -105,16 +92,67 @@ struct RawProcessor {
                                           y: CGFloat(obs.alignmentTransform.ty))
             }
         } catch {
-            return nil
+            // Ignore; return nil to skip transform
         }
         return nil
     }
 
-    private static func encodeJPEG(cgImage: CGImage, quality: CGFloat) -> Data {
+    // MARK: - Merge
+
+    private static func averageImages(_ images: [CIImage]) -> CIImage {
+        guard let first = images.first else { return CIImage() }
+        let scale = 1.0 / Double(images.count)
+        var acc = scaled(image: first, by: scale)
+        for i in 1..<images.count {
+            let scaledImg = scaled(image: images[i], by: scale)
+            let add = CIFilter(name: "CIAdditionCompositing", parameters: [
+                kCIInputImageKey: scaledImg,
+                kCIInputBackgroundImageKey: acc
+            ])?.outputImage
+            acc = add ?? acc
+        }
+        return acc
+    }
+
+    private static func scaled(image: CIImage, by scale: Double) -> CIImage {
+        // Use CIColorMatrix to multiply RGB by `scale`. Guard filter creation.
+        let params: [String: Any] = [
+            kCIInputImageKey: image,
+            "inputRVector": CIVector(x: scale, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: scale, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: scale, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1)
+        ]
+        return CIFilter(name: "CIColorMatrix", parameters: params)?.outputImage ?? image
+    }
+
+    // MARK: - Tone
+
+    private static func applyGentleTone(_ image: CIImage) -> CIImage {
+        // Very light shadow lift; if filter fails, return input.
+        let params: [String: Any] = [
+            kCIInputImageKey: image,
+            "inputShadowAmount": 0.2,
+            "inputHighlightAmount": 0.0
+        ]
+        return CIFilter(name: "CIHighlightShadowAdjust", parameters: params)?.outputImage ?? image
+    }
+
+    // MARK: - Encode
+
+    private static func renderJPEG(_ image: CIImage, context: CIContext, quality: CGFloat) throws -> Data {
+        let extent = image.extent
+        guard let cg = context.createCGImage(image, from: extent) else {
+            throw ProcessError(message: "CGImage render failed")
+        }
         let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return Data() }
-        CGImageDestinationAddImage(dest, cgImage, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-        CGImageDestinationFinalize(dest)
+        guard let dest = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
+            throw ProcessError(message: "CGImageDestination create failed")
+        }
+        CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else {
+            throw ProcessError(message: "CGImageDestination finalize failed")
+        }
         return data as Data
     }
 }

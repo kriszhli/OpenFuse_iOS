@@ -64,7 +64,7 @@ final class CameraController: NSObject {
             self.inFlightProcessors.removeAll(keepingCapacity: true)
 
             for index in 0..<burstCount {
-                var settings = AVCapturePhotoSettings(rawPixelFormatType: bayerRAW)
+                let settings = AVCapturePhotoSettings(rawPixelFormatType: bayerRAW)
 
                 // Apply the largest supported max dimension if available
                 if let bestDims { settings.maxPhotoDimensions = bestDims }
