@@ -1,0 +1,96 @@
+{
+  "source": "/Users/kris/Documents/XCodeApps/OpenFuse/OpenFuse/ContentView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Saved to Photos",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 84
+        }
+      },
+      {
+        "comment": "",
+        "key": "Permission Needed",
+        "location": {
+          "startingColumn": 16,
+          "startingLine": 89
+        }
+      },
+      {
+        "comment": "",
+        "key": "Error",
+        "location": {
+          "startingColumn": 13,
+          "startingLine": 96
+        }
+      },
+      {
+        "comment": "",
+        "key": "Camera not available in Simulator",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 17
+        }
+      },
+      {
+        "comment": "",
+        "key": "Capture Photo",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 63
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "Your image has been saved to the camera roll.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 87
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open Settings",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 90
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 91
+        }
+      },
+      {
+        "comment": "",
+        "key": "Please allow Camera and Photo Library (Add) access.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 93
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 102
+        }
+      }
+    ]
+  },
+  "version": 1
+}
