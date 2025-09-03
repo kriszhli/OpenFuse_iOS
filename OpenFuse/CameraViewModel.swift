@@ -20,9 +20,6 @@ final class CameraViewModel: ObservableObject {
     @Published var isConfiguring: Bool = false
     @Published var errorMessage: String?
 
-    // A dedicated serial queue for potential background work unrelated to direct session start/stop.
-    private let sessionQueue = DispatchQueue(label: "camera.session.queue")
-
     private let service = CameraService()
     private var isConfigured = false
 
@@ -53,10 +50,8 @@ final class CameraViewModel: ObservableObject {
         case true:
             do {
                 try await service.configureSession(session: session, position: .back)
+                await service.startSession(session)
                 await MainActor.run {
-                    if !session.isRunning {
-                        session.startRunning()
-                    }
                     isConfigured = true
                 }
             } catch {
@@ -121,14 +116,12 @@ final class CameraViewModel: ObservableObject {
     // MARK: - App Lifecycle Management
     
     func pauseSession() {
-        // Perform start/stop on the main actor to avoid capturing non-Sendable types in @Sendable closures
-        guard session.isRunning else { return }
-        session.stopRunning()
+        Task { await service.stopSession(session) }
     }
-    
+
     func resumeSession() {
-        guard isConfigured && !session.isRunning else { return }
-        session.startRunning()
+        guard isConfigured else { return }
+        Task { await service.startSession(session) }
     }
 
     // MARK: - Permissions
