@@ -119,6 +119,18 @@ actor CameraService {
         }
     }
 
+    /// Start the capture session on the actor's executor to avoid blocking the main thread.
+    func startSession(_ session: AVCaptureSession) {
+        guard !session.isRunning else { return }
+        session.startRunning()
+    }
+
+    /// Stop the capture session on the actor's executor to avoid blocking the main thread.
+    func stopSession(_ session: AVCaptureSession) {
+        guard session.isRunning else { return }
+        session.stopRunning()
+    }
+
     private func bestDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
         // Prefer the built-in wide-angle camera for photos
         if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) {
@@ -130,9 +142,7 @@ actor CameraService {
     func flipCamera(on session: AVCaptureSession) async throws {
         let newPosition: AVCaptureDevice.Position = (currentInput?.device.position == .back) ? .front : .back
         try await configureSession(session: session, position: newPosition)
-        if !session.isRunning {
-            session.startRunning()
-        }
+        startSession(session)
     }
 
     func capturePhoto(on session: AVCaptureSession, flash: Bool) async throws -> Data {
